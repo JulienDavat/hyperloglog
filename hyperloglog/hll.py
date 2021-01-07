@@ -6,6 +6,8 @@ import math
 from hashlib import sha1
 from .const import rawEstimateData, biasData, tresholdData
 from .compat import *
+import _pickle as pickle
+import json
 
 
 def bit_length(w):
@@ -153,4 +155,28 @@ class HyperLogLog(object):
             return H if H <= get_treshold(self.p) else self._Ep()
         else:
             return self._Ep()
+
+    def save(self):
+        # stringify M to improve the data transfer
+        fields = list()
+        for index in range(len(self.M)):
+            if self.M[index] > 0:
+                fields.append(f'{index}-{self.M[index]}')
+        return {
+            'alpha': self.alpha,
+            'p': self.p,
+            'm': self.m,
+            'M': ':'.join(fields)
+        }
+
+    def load(self, data):
+        self.alpha = data['alpha']
+        self.p = data['p']
+        self.m =  data['m']
+        self.M = [ 0 for i in range(data['m']) ]
+        # Update M using the saved state
+        fields = data['M'].split(':')
+        for field in fields:
+            [index, value] = field.split('-')
+            self.M[int(index)] = int(value)
 
