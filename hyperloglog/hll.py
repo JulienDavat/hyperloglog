@@ -157,26 +157,35 @@ class HyperLogLog(object):
             return self._Ep()
 
     def save(self):
-        # stringify M to improve the data transfer
+        # stringify M using the sparse representation
         fields = list()
         for index in range(len(self.M)):
             if self.M[index] > 0:
                 fields.append(f'{index}-{self.M[index]}')
+        sparse_repr = ':'.join(fields) 
+        sparse_repr = f'sparse_{sparse_repr}'
+        # stringify M using the full representation
+        full_repr = ':'.join([str(x) for x in self.M])
+        full_repr = f'full_{full_repr}'
         return {
             'alpha': self.alpha,
             'p': self.p,
             'm': self.m,
-            'M': ':'.join(fields)
+            'M': sparse_repr if len(sparse_repr) < len(full_repr) else full_repr
         }
 
     def load(self, data):
+        [encoding, str_M] = data['M'].split('_')
+        M = [ 0 for i in range(data['m']) ]
+        if encoding == 'sparse':
+            fields = str_M.split(':')
+            for field in fields:
+                [index, value] = field.split('-')
+                M[int(index)] = int(value)
+        elif encoding == 'full':
+            M = [int(x) for x in str_M.split(':')]
         self.alpha = data['alpha']
         self.p = data['p']
         self.m =  data['m']
-        self.M = [ 0 for i in range(data['m']) ]
-        # Update M using the saved state
-        fields = data['M'].split(':')
-        for field in fields:
-            [index, value] = field.split('-')
-            self.M[int(index)] = int(value)
+        self.M = M
 
