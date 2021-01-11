@@ -156,36 +156,79 @@ class HyperLogLog(object):
         else:
             return self._Ep()
 
-    def save(self):
+
+
+    def __save_M(self):
         # stringify M using the sparse representation
-        fields = list()
+        sparse_repr = list()
         for index in range(len(self.M)):
             if self.M[index] > 0:
-                fields.append(f'{index}-{self.M[index]}')
-        sparse_repr = ':'.join(fields) 
+                sparse_repr.append(f'{index}-{self.M[index]}')
+        sparse_repr = ':'.join(sparse_repr) 
         sparse_repr = f'sparse_{sparse_repr}'
         # stringify M using the full representation
-        full_repr = ':'.join([str(x) for x in self.M])
+        full_repr = ':'.join([str(x) if x > 0 else '' for x in self.M])
         full_repr = f'full_{full_repr}'
-        return {
-            'alpha': self.alpha,
-            'p': self.p,
-            'm': self.m,
-            'M': sparse_repr if len(sparse_repr) < len(full_repr) else full_repr
-        }
+        # stringigy M using an improved version of the full representation for sparse arrays
+        sparsesioux_repr = list()
+        nb_consecutive_zeros = 0
+        for index in range(len(self.M)):
+            if self.M[index] == 0:
+                nb_consecutive_zeros += 1
+            elif nb_consecutive_zeros == 0:
+                sparsesioux_repr.append(str(self.M[index]))
+            else:
+                sparsesioux_repr.append(f'!{nb_consecutive_zeros}')
+                sparsesioux_repr.append(str(self.M[index]))
+                nb_consecutive_zeros = 0
+        if nb_consecutive_zeros > 0:
+            sparsesioux_repr.append(f'!{nb_consecutive_zeros}')
+        sparsesioux_repr = ':'.join(sparsesioux_repr) 
+        sparsesioux_repr = f'sparsesioux_{sparsesioux_repr}'
+        # return the shortest representation
+        if len(sparsesioux_repr) <= len(full_repr) and len(sparsesioux_repr) <= len(sparse_repr):
+            return sparsesioux_repr
+        elif len(sparse_repr) <= len(full_repr) and len(sparse_repr) <= len(sparsesioux_repr):
+            return sparse_repr
+        else:
+            return full_repr
 
-    def load(self, data):
+    def __load_M(self, data):
         [encoding, str_M] = data['M'].split('_')
         M = [ 0 for i in range(data['m']) ]
+        # parse M when M has been stringified using the sparse representation
         if encoding == 'sparse':
             fields = str_M.split(':')
             for field in fields:
                 [index, value] = field.split('-')
                 M[int(index)] = int(value)
-        elif encoding == 'full':
-            M = [int(x) for x in str_M.split(':')]
+        # parse M when M has been stringified using the full representation
+        if encoding == 'full':
+            M = [int(x) if x != '' else 0 for x in str_M.split(':')]
+        # parse M when M has been stringified using the sparsesioux representation
+        if encoding == 'sparsesioux':
+            fields = str_M.split(':')
+            index = 0
+            for field in fields:
+                if field.startswith('!'):
+                    index += int(field[1:])
+                else:
+                    M[int(index)] = int(field)
+                    index += 1
+            assert index == data['m']
+        return M
+
+    def save(self):
+        return {
+            'alpha': self.alpha,
+            'p': self.p,
+            'm': self.m,
+            'M': self.__save_M()
+        }
+
+    def load(self, data):
         self.alpha = data['alpha']
         self.p = data['p']
         self.m =  data['m']
-        self.M = M
+        self.M = self.__load_M(data)
 
