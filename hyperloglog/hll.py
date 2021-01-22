@@ -3,7 +3,8 @@ This module implements probabilistic data structure which is able to calculate t
 """
 
 import math
-from hashlib import sha1
+import xxhash
+# from hashlib import sha1
 from .const import rawEstimateData, biasData, tresholdData
 from .compat import *
 import _pickle as pickle
@@ -90,7 +91,7 @@ class HyperLogLog(object):
         self.alpha = get_alpha(p)
         self.p = p
         self.m = 1 << p
-        self.M = [ 0 for i in range(self.m) ]
+        self.M = [0] * self.m # [ 0 for i in range(self.m) ]
 
     def __getstate__(self):
         return dict([x, getattr(self, x)] for x in self.__slots__)
@@ -109,7 +110,8 @@ class HyperLogLog(object):
         # w = <x_{p}x_{p+1}..>
         # M[j] = max(M[j], rho(w))
 
-        x = long(sha1(bytes(value.encode('utf8') if isinstance(value, unicode) else value)).hexdigest()[:16], 16)
+        x = long(xxhash.xxh64_hexdigest(value)[:16], 16)
+        # x = long(sha1(bytes(value.encode('utf8'))).hexdigest()[:16], 16)
         j = x & (self.m - 1)
         w = x >> self.p
 
@@ -160,38 +162,30 @@ class HyperLogLog(object):
 
     def __save_M(self):
         # stringify M using the sparse representation
-        sparse_repr = list()
-        for index in range(len(self.M)):
+        sparse_repr = 'sparse_'
+        for index in range(self.m):
             if self.M[index] > 0:
-                sparse_repr.append(f'{index}-{self.M[index]}')
-        sparse_repr = ':'.join(sparse_repr) 
-        sparse_repr = f'sparse_{sparse_repr}'
-        # stringify M using the full representation
-        full_repr = ':'.join([str(x) if x > 0 else '' for x in self.M])
-        full_repr = f'full_{full_repr}'
+                sparse_repr += f'{index}-{self.M[index]}:'
+        sparse_repr = sparse_repr[:-1]
         # stringigy M using an improved version of the full representation for sparse arrays
-        sparsesioux_repr = list()
+        fullsioux_repr = 'fullsioux_'
         nb_consecutive_zeros = 0
-        for index in range(len(self.M)):
+        for index in range(self.m):
             if self.M[index] == 0:
                 nb_consecutive_zeros += 1
             elif nb_consecutive_zeros == 0:
-                sparsesioux_repr.append(str(self.M[index]))
+                fullsioux_repr += f'{self.M[index]}:'
             else:
-                sparsesioux_repr.append(f'!{nb_consecutive_zeros}')
-                sparsesioux_repr.append(str(self.M[index]))
+                fullsioux_repr += f'!{nb_consecutive_zeros}:'
+                fullsioux_repr += f'{self.M[index]}:'
                 nb_consecutive_zeros = 0
         if nb_consecutive_zeros > 0:
-            sparsesioux_repr.append(f'!{nb_consecutive_zeros}')
-        sparsesioux_repr = ':'.join(sparsesioux_repr) 
-        sparsesioux_repr = f'sparsesioux_{sparsesioux_repr}'
-        # return the shortest representation
-        if len(sparsesioux_repr) <= len(full_repr) and len(sparsesioux_repr) <= len(sparse_repr):
-            return sparsesioux_repr
-        elif len(sparse_repr) <= len(full_repr) and len(sparse_repr) <= len(sparsesioux_repr):
-            return sparse_repr
+            fullsioux_repr += f'!{nb_consecutive_zeros}:'
+        fullsioux_repr = fullsioux_repr[:-1]
+        if len(fullsioux_repr) < len(sparse_repr):
+            return fullsioux_repr
         else:
-            return full_repr
+            return sparse_repr
 
     def __load_M(self, data):
         [encoding, str_M] = data['M'].split('_')
@@ -202,11 +196,8 @@ class HyperLogLog(object):
             for field in fields:
                 [index, value] = field.split('-')
                 M[int(index)] = int(value)
-        # parse M when M has been stringified using the full representation
-        if encoding == 'full':
-            M = [int(x) if x != '' else 0 for x in str_M.split(':')]
         # parse M when M has been stringified using the sparsesioux representation
-        if encoding == 'sparsesioux':
+        if encoding == 'fullsioux':
             fields = str_M.split(':')
             index = 0
             for field in fields:
