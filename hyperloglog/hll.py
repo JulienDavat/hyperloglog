@@ -70,7 +70,7 @@ class HyperLogLog(object):
     HyperLogLog cardinality counter
     """
 
-    __slots__ = ('alpha', 'p', 'm', 'M')
+    __slots__ = ('_alpha', '_p', '_m', '_M', '_size')
 
     def __init__(self, error_rate):
         """
@@ -88,10 +88,11 @@ class HyperLogLog(object):
 
         p = int(math.ceil(math.log((1.04 / error_rate) ** 2, 2)))
 
-        self.alpha = get_alpha(p)
-        self.p = p
-        self.m = 1 << p
-        self.M = [0] * self.m # [ 0 for i in range(self.m) ]
+        self._alpha = get_alpha(p)
+        self._p = p
+        self._m = 1 << p
+        self._M = [0] * self._m
+        self._size = math.ceil((self._m * math.ceil(math.log(64 - self._p, 2))) / 8)
 
     def __getstate__(self):
         return dict([x, getattr(self, x)] for x in self.__slots__)
@@ -112,10 +113,10 @@ class HyperLogLog(object):
 
         x = long(xxhash.xxh64_hexdigest(value)[:16], 16)
         # x = long(sha1(bytes(value.encode('utf8'))).hexdigest()[:16], 16)
-        j = x & (self.m - 1)
-        w = x >> self.p
+        j = x & (self._m - 1)
+        w = x >> self._p
 
-        self.M[j] = max(self.M[j], get_rho(w, 64 - self.p))
+        self._M[j] = max(self._M[j], get_rho(w, 64 - self._p))
 
     def update(self, *others):
         """
@@ -123,16 +124,16 @@ class HyperLogLog(object):
         """
 
         for item in others:
-            if self.m != item.m:
+            if self._m != item._m:
                 raise ValueError('Counters precisions should be equal')
 
-        self.M = [max(*items) for items in zip(*([ item.M for item in others ] + [ self.M ]))]
+        self._M = [max(*items) for items in zip(*([ item._M for item in others ] + [ self._M ]))]
 
     def __eq__(self, other):
-        if self.m != other.m:
+        if self._m != other._m:
             raise ValueError('Counters precisions should be equal')
 
-        return self.M == other.M
+        return self._M == other._M
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -141,8 +142,14 @@ class HyperLogLog(object):
         return round(self.card())
 
     def _Ep(self):
-        E = self.alpha * float(self.m ** 2) / sum(math.pow(2.0, -x) for x in self.M)
-        return (E - estimate_bias(E, self.p)) if E <= 5 * self.m else E
+        E = self._alpha * float(self._m ** 2) / sum(math.pow(2.0, -x) for x in self._M)
+        return (E - estimate_bias(E, self._p)) if E <= 5 * self._m else E
+
+    def size(self):
+        """
+        Returns the hyperloglog size in bytes
+        """
+        return self._size
 
     def card(self):
         """
@@ -150,11 +157,11 @@ class HyperLogLog(object):
         """
 
         #count number or registers equal to 0
-        V = self.M.count(0)
+        V = self._M.count(0)
 
         if V > 0:
-            H = self.m * math.log(self.m / float(V))
-            return H if H <= get_treshold(self.p) else self._Ep()
+            H = self._m * math.log(self._m / float(V))
+            return H if H <= get_treshold(self._p) else self._Ep()
         else:
             return self._Ep()
 
@@ -163,21 +170,21 @@ class HyperLogLog(object):
     def __save_M(self):
         # stringify M using the sparse representation
         sparse_repr = 'sparse_'
-        for index in range(self.m):
-            if self.M[index] > 0:
-                sparse_repr += f'{index}-{self.M[index]}:'
+        for index in range(self._m):
+            if self._M[index] > 0:
+                sparse_repr += f'{index}-{self._M[index]}:'
         sparse_repr = sparse_repr[:-1]
         # stringigy M using an improved version of the full representation for sparse arrays
         fullsioux_repr = 'fullsioux_'
         nb_consecutive_zeros = 0
-        for index in range(self.m):
-            if self.M[index] == 0:
+        for index in range(self._m):
+            if self._M[index] == 0:
                 nb_consecutive_zeros += 1
             elif nb_consecutive_zeros == 0:
-                fullsioux_repr += f'{self.M[index]}:'
+                fullsioux_repr += f'{self._M[index]}:'
             else:
                 fullsioux_repr += f'!{nb_consecutive_zeros}:'
-                fullsioux_repr += f'{self.M[index]}:'
+                fullsioux_repr += f'{self._M[index]}:'
                 nb_consecutive_zeros = 0
         if nb_consecutive_zeros > 0:
             fullsioux_repr += f'!{nb_consecutive_zeros}:'
@@ -211,15 +218,15 @@ class HyperLogLog(object):
 
     def save(self):
         return {
-            'alpha': self.alpha,
-            'p': self.p,
-            'm': self.m,
+            'alpha': self._alpha,
+            'p': self._p,
+            'm': self._m,
             'M': self.__save_M()
         }
 
     def load(self, data):
-        self.alpha = data['alpha']
-        self.p = data['p']
-        self.m =  data['m']
-        self.M = self.__load_M(data)
+        self._alpha = data['alpha']
+        self._p = data['p']
+        self._m =  data['m']
+        self._M = self.__load_M(data)
 
